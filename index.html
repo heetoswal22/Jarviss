@@ -364,4 +364,48 @@ $('keysave').onclick = () => {
 };
 async function askClaude() {
   const headers = { 'Content-Type': 'application/json' };
-  if (apiKey) { headers['x-api-key'] = apiKey; headers['anthropic-version'] = '
+  if (apiKey) { headers['x-api-key'] = apiKey; headers['anthropic-version'] = '2023-06-01'; headers['anthropic-dangerous-direct-browser-access'] = 'true'; }
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST', headers,
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-6', max_tokens: 1000,
+      system: PERSONA + '\nSaved contacts (name: number or email): ' + (Object.keys(contacts).length ? JSON.stringify(contacts) : 'none') + '\nCurrent date and time: ' + new Date().toString(),
+      messages: convo.slice(-20)
+    })
+  });
+  if (!res.ok) { const e = new Error('API ' + res.status); e.status = res.status; throw e; }
+  const data = await res.json();
+  return data.content.map(b => b.type === 'text' ? b.text : '').join('').trim();
+}
+
+async function send(raw) {
+  const t = (raw ?? textEl.value).trim(); if (!t || busy) return;
+  textEl.value = ''; busy = true; addMsg('user', t);
+  let reply, action = null;
+  const local = localIntent(t);
+  try {
+    if (local) { reply = local; convo.push({ role: 'user', content: t }, { role: 'assistant', content: reply }); }
+    else {
+      setMode('thinking'); convo.push({ role: 'user', content: t });
+      reply = await askClaude(); convo.push({ role: 'assistant', content: reply });
+      const x = extractAction(reply); reply = x.text || 'Done.'; action = x.action;
+    }
+    addMsg('ai', reply); if (action) showAction(action); await speak(reply);
+  } catch (e) {
+    convo.pop();
+    if (!apiKey && (e instanceof TypeError || e.status === 401 || e.status === 403)) {
+      addMsg('sys', 'Jarvis needs an API key when opened outside Claude. Tap "API key" below, paste yours, and try again.');
+      $('keyrow').style.display = 'flex';
+    } else if (e.status === 401) addMsg('sys', 'That API key was rejected. Check it and save it again.');
+    else addMsg('sys', 'Could not reach Claude (' + e.message + '). Try again.');
+  }
+  busy = false; setMode('idle');
+  if ($('loop').checked) setTimeout(startListening, 250);
+}
+$('send').onclick = () => send();
+textEl.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
+
+addMsg('ai', `Good to see you, ${OWNER}. Try: "save contact Mom 9876543210", then "call Mom", "WhatsApp Mom I'm on my way", "directions to the airport", or "set a timer for 5 minutes".`);
+</script>
+</body>
+</html>
